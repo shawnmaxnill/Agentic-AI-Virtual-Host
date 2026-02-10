@@ -1,0 +1,7 @@
+.env
+models
+include
+bin
+lib
+lib64
+pyvenv.cfg
