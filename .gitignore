@@ -5,3 +5,7 @@ bin
 lib
 lib64
 pyvenv.cfg
+copy_folder/
+__pycache__/
+*.pyc
+voicebank/voice_db/
