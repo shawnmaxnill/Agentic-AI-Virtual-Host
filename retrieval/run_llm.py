@@ -2,48 +2,96 @@ from retrieval.paper_retriever import PaperRetriever
 from retrieval.vectorstore_loader import load_vectorstore
 from llama_cpp import Llama
 from dotenv import load_dotenv
-load_dotenv()
+
 import os
+from pathlib import Path
+from typing import List, Dict
 
-# Load vectorstore and model once
-print("Loading vecstore")
-vectorstore = load_vectorstore(os.path.join(os.path.dirname(__file__), "../data/vectorstore"))
-retriever = PaperRetriever(vectorstore)
+load_dotenv()
 
-print("Starting model")
-model_path = os.path.join(os.path.dirname(__file__), "../models/Llama-2-7b-chat-hf.Q4_K_M.gguf")
-model = Llama(model_path=model_path, n_gpu_layers=-1, verbose=True)
+# ---------- PATH SETUP ----------
+BASE_DIR = Path(__file__).resolve().parent
+VECTORSTORE_PATH = BASE_DIR / "../data/vectorstore"
+MODEL_PATH = BASE_DIR / "../models/Llama-2-7b-chat-hf.Q4_K_M.gguf"
 
 
-def answer_query(query: str, max_tokens=200):
-    """Returns the model's response to the query"""
-    # Retrieve docs
-    docs = vectorstore.similarity_search(query, k=1)
+# ---------- CHAT ENGINE ----------
 
-    # Combine docs into context
-    context = "\n\n".join(doc.page_content for doc in docs)
+# Continuous flow of chat message
+class ChatEngine:
+    def __init__(self, retriever, model, max_history=6):
+        self.retriever = retriever
+        self.model = model
+        self.chat_history: List[Dict[str, str]] = []
+        self.max_history = max_history
 
-    # Build prompt
-    prompt = f"""
-You are a product manager, your job is to recommend items for customers. Keep the answer short yet informative.
-Use the context below to answer the question. Don't use information other than the retrieved context.
-If the answer is not in the context, say you don't know.
+    def format_chat_history(self) -> str:
+        formatted = []
 
-Context:
-{context}
+        for msg in self.chat_history[-self.max_history:]:
+            if msg["role"] == "user":
+                formatted.append(f"<s>[INST] {msg['content']} [/INST]")
+            else:
+                formatted.append(f"{msg['content']} </s>")
 
-Question:
-{query}
-"""
+        return "".join(formatted)
 
-    # Generate answer
-    output = model(
-        prompt,
-        max_tokens=max_tokens,
-        temperature=0.7,
-        top_p=0.95,
-        stop=["[INST]", "</s>"]
+    def build_prompt(self, query: str, context: str) -> str:
+        system = (
+            "You are a product manager. Recommend items for customers.\n"
+            "Keep the answer short and informative.\n"
+            "Use only the provided context.\n"
+            "If the answer is not in the context, say you don't know.\n\n"
+        )
+
+        return (
+            f"{system}"
+            f"Context:\n{context}\n\n"
+            f"Question:\n{query}\n"
+            f"{self.format_chat_history()}"
+        )
+
+    def retrieve_context(self, query: str, k: int = 1) -> str:
+        docs = self.retriever.retrieve(query, k)
+        return "\n\n".join(doc.page_content for doc in docs)
+
+    def ask(self, query: str, max_tokens: int = 200) -> str:
+        context = self.retrieve_context(query)
+
+        self.chat_history.append({"role": "user", "content": query})
+
+        prompt = self.build_prompt(query, context)
+
+        output = self.model(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=0.7,
+            top_p=0.95,
+            stop=["</s>"],
+        )
+
+        response = output["choices"][0]["text"].strip()
+
+        self.chat_history.append({"role": "assistant", "content": response})
+
+        return response
+
+# ---------- LOAD ---------
+def create_chat_engine() -> ChatEngine:
+    # Initializing vectorstore
+    print("Loading vectorstore...")
+    vectorstore = load_vectorstore(VECTORSTORE_PATH)
+    retriever = PaperRetriever(vectorstore)
+
+    print("Loading model...")
+    llm = Llama(
+        model_path=str(MODEL_PATH),
+        n_gpu_layers=-1,
+        n_ctx=4096,
+        n_batch=512,
+        f16_kv=True,
+        n_threads=os.cpu_count(),
+        verbose=False,
     )
 
-    response = output["choices"][0]["text"]
-    return response
+    return ChatEngine(retriever, llm)
