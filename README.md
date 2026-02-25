@@ -2,10 +2,6 @@
 
 This repo is in WIP state. Additions and improve pending are:
 
-Virtual model integration via VTube Studio webhook.  
-Continuous chatting with LLM.  
-Continuous live state of LLM.
-
 The aim of this project is to create an AI live host that ideally be hosted on social media sales platform aka Shopee/Tiktok Live.
 
 This idea is to use RAG for product information and pass it to an LLM where it'll download a `.wav` file which would be played into a virtual model therefore 'speaking' to us.
